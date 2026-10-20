@@ -1,0 +1,308 @@
+diff --git a/src/samsung_tv_root/archive_root.py b/src/samsung_tv_root/archive_root.py
+index 95e96ec..8545e92 100644
+--- a/src/samsung_tv_root/archive_root.py
++++ b/src/samsung_tv_root/archive_root.py
+@@ -13,9 +13,10 @@ import tarfile
+ import tempfile
+ from dataclasses import dataclass
+ from pathlib import Path, PurePosixPath
++from collections.abc import Awaitable, Callable
+ 
+ from .resources import payload_directory
+-from .root_agent import RootAgentServer, generate_secret, write_secret
++from .root_agent import RootAgentConnection, RootAgentServer, generate_secret, write_secret
+ from .sdb import CaptureResult, SdbClient, SdbError, find_sdb, route_callback_host
+ 
+ 
+@@ -30,6 +31,7 @@ RUNTIME_CONFIG_FILES = (
+     "SamsungTvRootAgent.runtimeconfig.json",
+ )
+ SYSTEM_HASH_COMMAND = "sha256sum /etc/passwd /usr/share/sdbd/public.pem"
++DOTNET_RUNTIME_ROOT = "/usr/share/dotnet/shared/Microsoft.NETCore.App"
+ 
+ 
+ class ArchiveRootError(RuntimeError):
+@@ -62,6 +64,28 @@ def _file_capabilities(line: str) -> dict[str, str]:
+     return result
+ 
+ 
++def _list_dotnet_runtimes(client: SdbClient) -> str:
++    command = "/usr/bin/dotnet --list-runtimes"
++    output = client.capture(command, timeout=15.0).output
++    # Samsung's launcher can reject the host CLI option despite an installed CLR.
++    # Require its exact diagnostic and a completed command, not a generic failure.
++    if re.search(r"(?m)^Unknown option --list-runtimes\.\r?$", output) and re.search(
++        r"\n\[exit:\d+\]\s*\Z", output
++    ):
++        return _capture(
++            client,
++            f'for runtime in "{DOTNET_RUNTIME_ROOT}"/*; do '
++            'if [ -d "$runtime" ] '
++            '&& [ -f "$runtime/System.Private.CoreLib.dll" ] '
++            '&& [ -f "$runtime/libcoreclr.so" ]; then '
++            "printf 'Microsoft.NETCore.App %s [%s]\\n' "
++            f'"${{runtime##*/}}" "{DOTNET_RUNTIME_ROOT}"; fi; done',
++        )
++    if "[exit:0]" not in output:
++        raise ArchiveRootError(f"SDK command failed: {command}: {output.strip()}")
++    return output.split("\n[exit:0]", 1)[0].strip()
++
++
+ def _check_target(client: SdbClient) -> TargetAssessment:
+     client.connect()
+     client.require_device()
+@@ -84,7 +108,7 @@ def _check_target(client: SdbClient) -> TargetAssessment:
+         raise ArchiveRootError(
+             "sdbd-tarlauncher lacks effective SETUID/SETGID capabilities"
+         )
+-    runtimes = _capture(client, "/usr/bin/dotnet --list-runtimes")
++    runtimes = _list_dotnet_runtimes(client)
+     majors = {
+         int(match.group(1))
+         for line in runtimes.splitlines()
+@@ -141,7 +165,7 @@ def _prepare_artifacts(
+     )
+     _openssl("pkey", "-in", str(private_key), "-pubout", "-out", str(public_key))
+     (directory / "passwd").write_text(
+-        "owner:x:0:0:owner:/home/owner:/bin/sh\n", encoding="ascii"
++        "owner:x:0:0:owner:/home/owner:/bin/sh\n", encoding="ascii", newline="\n"
+     )
+     runtime_version = "3.1.0" if runtime == "3.1" else "6.0.0"
+     runtime_config = {
+@@ -235,6 +259,7 @@ async def probe(
+     command_timeout: float = 45.0,
+     commands: tuple[str, ...] = (),
+     payloads: Path | None = None,
++    session_callback: Callable[[RootAgentConnection], Awaitable[None]] | None = None,
+ ) -> dict[str, object]:
+     ipaddress.IPv4Address(tv_host)
+     callback = callback_host or route_callback_host(tv_host)
+@@ -277,7 +302,7 @@ async def probe(
+                     command,
+                     callback_host=callback,
+                     bind_host=bind,
+-                    timeout=accept_timeout + 20,
++                    timeout=12 * 60 * 60 if session_callback is not None else accept_timeout + 20,
+                 )
+             )
+             try:
+@@ -327,6 +352,8 @@ async def probe(
+                                 "stderr": result.stderr,
+                             }
+                         )
++                if session_callback is not None:
++                    await session_callback(connection)
+             finally:
+                 await connection.shutdown()
+             if launch_task is not None:
+diff --git a/src/samsung_tv_root/sdb.py b/src/samsung_tv_root/sdb.py
+index 8b3d132..1093768 100644
+--- a/src/samsung_tv_root/sdb.py
++++ b/src/samsung_tv_root/sdb.py
+@@ -350,6 +350,7 @@ class SdbClient:
+             local_path.write_text(
+                 f"/bin/rm -f {remote_path}\n{command}\n",
+                 encoding="utf-8",
++                newline="\n",
+             )
+             self.push(local_path, remote_path)
+         return f". {remote_path}"
+diff --git a/tests/test_sdb.py b/tests/test_sdb.py
+index bd81f60..b94284f 100644
+--- a/tests/test_sdb.py
++++ b/tests/test_sdb.py
+@@ -144,6 +144,24 @@ def test_capture_stages_oversized_command(monkeypatch) -> None:
+     )
+ 
+ 
++def test_staged_script_uses_lf_on_windows(monkeypatch) -> None:
++    client = SdbClient(Path("sdb"), "192.0.2.50")
++    staged = {}
++
++    def push(local_path, remote_path):
++        staged["bytes"] = local_path.read_bytes()
++        staged["remote_path"] = remote_path
++
++    monkeypatch.setattr(client, "push", push)
++    launch = client._stage_script("printf one\nprintf two")
++
++    assert staged["bytes"] == (
++        f"/bin/rm -f {staged['remote_path']}\nprintf one\nprintf two\n"
++    ).encode("utf-8")
++    assert b"\r" not in staged["bytes"]
++    assert launch == f". {staged['remote_path']}"
++
++
+ def test_capture_timeout_reports_active_listener_and_injection_exit(monkeypatch) -> None:
+     client = SdbClient(Path("sdb"), "192.0.2.50")
+     result = subprocess.CompletedProcess(("sdb",), 1, "", "closed\n")
+diff --git a/tests/test_archive_root_runtime.py b/tests/test_archive_root_runtime.py
+new file mode 100644
+index 0000000..6c62934
+--- /dev/null
++++ b/tests/test_archive_root_runtime.py
+@@ -0,0 +1,164 @@
++"""Offline checks for Samsung launchers without --list-runtimes support."""
++
++from __future__ import annotations
++
++import os
++import shutil
++import subprocess
++from pathlib import Path
++
++import pytest
++
++from samsung_tv_root import archive_root
++from samsung_tv_root.sdb import CaptureResult, SdbError
++
++
++class RuntimeClient:
++    def __init__(self, runtime_output, fallback_output="", tar_output="--to-command"):
++        self.runtime_output = runtime_output
++        self.fallback_output = fallback_output
++        self.tar_output = tar_output
++        self.commands = []
++
++    def connect(self):
++        pass
++
++    def require_device(self):
++        pass
++
++    def require_shell_injection(self):
++        pass
++
++    def capture(self, command, timeout=15):
++        self.commands.append(command)
++        if command.startswith("getcap"):
++            output = (
++                "/usr/bin/dotnet cap_setgid,cap_sys_admin=ei\n"
++                "/usr/sbin/sdbd-tarlauncher cap_setgid,cap_setuid=eip"
++            )
++        elif command == "/usr/bin/dotnet --list-runtimes":
++            if isinstance(self.runtime_output, Exception):
++                raise self.runtime_output
++            return CaptureResult(self.runtime_output, 0.0)
++        elif command.startswith("for runtime in "):
++            if callable(self.fallback_output):
++                return self.fallback_output(command)
++            output = self.fallback_output
++        elif "tar --help" in command:
++            output = self.tar_output
++        elif command == archive_root.SYSTEM_HASH_COMMAND:
++            output = "hash-passwd /etc/passwd\nhash-key /usr/share/sdbd/public.pem"
++        else:
++            raise AssertionError(f"unexpected command: {command}")
++        return CaptureResult(output + "\n[exit:0]\n", 0.0)
++
++
++def test_prepared_passwd_uses_unix_line_ending(tmp_path, monkeypatch):
++    monkeypatch.setattr(archive_root, "_openssl", lambda *arguments: None)
++    archive_root._prepare_artifacts(
++        tmp_path, "6.0", "archive-root-test", "192.0.2.77", 12345, b"x" * 32
++    )
++    assert (tmp_path / "passwd").read_bytes() == (
++        b"owner:x:0:0:owner:/home/owner:/bin/sh\n"
++    )
++
++
++@pytest.mark.parametrize(
++    ("version", "expected"), (("6.0.9", "6.0"), ("3.1.3", "3.1"), ("8.0.1", "6.0"))
++)
++@pytest.mark.parametrize("exit_code", (0, 1))
++def test_samsung_launcher_fallback_selects_supported_runtime(
++    version, expected, exit_code
++):
++    client = RuntimeClient(
++        f"Unknown option --list-runtimes.\n[exit:{exit_code}]\n",
++        f"Microsoft.NETCore.App {version} [{archive_root.DOTNET_RUNTIME_ROOT}]",
++    )
++    assessment = archive_root._check_target(client)
++    assert assessment.runtime == expected
++    assert any("tar --help" in command for command in client.commands)
++    assert client.commands[-1] == archive_root.SYSTEM_HASH_COMMAND
++
++
++@pytest.mark.parametrize(
++    "output",
++    (
++        "Permission denied\n[exit:126]\n",
++        "Unknown option --info.\n[exit:1]\n",
++        "Unknown option --list-runtimes.\n",  # Incomplete capture is not evidence.
++        "Segmentation fault\n[exit:139]\n",
++    ),
++)
++def test_ordinary_failure_does_not_trigger_fallback(output):
++    client = RuntimeClient(output)
++    with pytest.raises(archive_root.ArchiveRootError, match="SDK command failed"):
++        archive_root._check_target(client)
++    assert not any(command.startswith("for runtime in ") for command in client.commands)
++
++
++def test_capture_transport_error_does_not_trigger_fallback():
++    client = RuntimeClient(SdbError("capture timed out"))
++    with pytest.raises(SdbError, match="timed out"):
++        archive_root._check_target(client)
++    assert not any(command.startswith("for runtime in ") for command in client.commands)
++
++
++@pytest.mark.parametrize("version", (None, "5.0.17", "6.0.9-invalid"))
++def test_fallback_rejects_absent_or_unsupported_runtime(version):
++    output = "" if version is None else f"Microsoft.NETCore.App {version} [/ignored]"
++    client = RuntimeClient("Unknown option --list-runtimes.\n[exit:1]\n", output)
++    with pytest.raises(archive_root.ArchiveRootError, match="no supported"):
++        archive_root._check_target(client)
++
++
++def test_fallback_keeps_tar_requirement():
++    client = RuntimeClient(
++        "Unknown option --list-runtimes.\n[exit:1]\n",
++        f"Microsoft.NETCore.App 6.0.9 [{archive_root.DOTNET_RUNTIME_ROOT}]",
++        tar_output="",
++    )
++    with pytest.raises(archive_root.ArchiveRootError, match="tar does not support"):
++        archive_root._check_target(client)
++
++
++@pytest.mark.parametrize(
++    "files",
++    (
++        (),
++        ("System.Private.CoreLib.dll",),
++        ("libcoreclr.so",),
++        ("System.Private.CoreLib.dll", "libcoreclr.so"),
++    ),
++)
++def test_fallback_enumeration_requires_both_runtime_files(tmp_path, monkeypatch, files):
++    shell = shutil.which("sh")
++    if shell is None and os.name == "nt":
++        git_bash = (
++            Path(os.environ.get("ProgramFiles", "C:/Program Files"))
++            / "Git/bin/bash.exe"
++        )
++        shell = str(git_bash) if git_bash.is_file() else None
++    if shell is None:
++        pytest.skip("POSIX shell unavailable for offline enumeration check")
++    runtime_root = tmp_path / "Microsoft.NETCore.App"
++    runtime = runtime_root / "6.0.9"
++    runtime.mkdir(parents=True)
++    for name in files:
++        (runtime / name).touch()
++    monkeypatch.setattr(archive_root, "DOTNET_RUNTIME_ROOT", runtime_root.as_posix())
++
++    def enumerate_locally(command):
++        result = subprocess.run(
++            (shell, "-c", command), capture_output=True, text=True, check=False
++        )
++        assert result.returncode == 0, result.stderr
++        return CaptureResult(result.stdout + "\n[exit:0]\n", 0.0)
++
++    client = RuntimeClient(
++        "Unknown option --list-runtimes.\n[exit:1]\n", enumerate_locally
++    )
++    if len(files) == 2:
++        assert archive_root._check_target(client).runtime == "6.0"
++    else:
++        with pytest.raises(archive_root.ArchiveRootError, match="no supported"):
++            archive_root._check_target(client)

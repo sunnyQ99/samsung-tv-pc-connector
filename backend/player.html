@@ -1,0 +1,5 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'unsafe-inline'; media-src 'self' blob:; connect-src 'self'">
+<title>TV video stream</title><style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#10151f;color:#dde6f5;font:16px 'Segoe UI','Microsoft YaHei',sans-serif}video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}[hidden]{display:none!important}#status{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;background:#10151f}#status strong{font-size:23px;font-weight:500}#detail{font-size:14px;color:#91a1b8;max-width:80%;line-height:1.6;text-align:center}
+</style><canvas id="direct" width="1920" height="1080" hidden></canvas><video id="tv" autoplay muted playsinline hidden></video><div id="status"><strong id="title">TV not connected</strong><div id="detail">Waiting for the TV to power on</div></div><script src="/player.js" defer></script></html>

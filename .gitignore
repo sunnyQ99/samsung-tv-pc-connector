@@ -1,0 +1,54 @@
+# Whitelist: only project sources are tracked. Local evidence, build output,
+# third-party binaries and device-specific state stay on disk, untracked.
+/*
+!/.gitignore
+!/.gitmodules
+!/README.md
+!/LICENSE
+!/backend/
+!/tv-control-app/
+!/desktop-cast/
+!/desktop-control/
+!/tools/
+!/patches/
+!/research/
+
+# research/: only the samsung-tv-root submodule
+/research/*
+!/research/samsung-tv-root
+
+# tools/: only this project's own sources
+/tools/*
+!/tools/pair-tv.py
+!/tools/tv-native-input/
+!/tools/tv-native-stream/
+!/tools/tv-boot-app/
+!/tools/tv-pointer-probe/
+!/tools/cast/
+/tools/cast/*
+!/tools/cast/deeplink-helper/
+
+# Build output and caches
+bin/
+obj/
+out/
+out-screen/
+__pycache__/
+*.pyc
+/tv-control-app/publish*/
+/desktop-control/publish/
+
+# Generated per-machine configuration (created by Initialize-CastHost.ps1)
+/desktop-cast/sunshine.conf
+/desktop-cast/apps.json
+
+# Build reports, signing inspections and device evidence
+/tools/tv-native-stream/MANIFEST.json
+/tools/tv-boot-app/*.json
+/tools/tv-boot-app/*.txt
+/tools/tv-boot-app/cert-inspection/
+/tools/tv-boot-app/verification-classes/
+/tools/tv-pointer-probe/*.json
+/tools/cast/deeplink-helper/evidence/
+/tools/cast/deeplink-helper/manifest.json
+/tools/cast/deeplink-helper/OWNER-SESSION-RESEARCH.md

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1920,height=1080,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>TVCITATION Pointer Test</title>
+  <link rel="stylesheet" href="probe.css">
+  <script src="probe.js" defer></script>
+</head>
+<body>
+  <header><h1>Pointer and picture test</h1><span>TVCPtrT001 · local test page</span></header>
+  <main id="stage">
+    <div class="swatches">
+      <button id="red" class="red">Red · 1</button><button id="green" class="green">Green · 2</button>
+      <button id="blue" class="blue">Blue · 3</button><button id="white" class="white">White · 4</button>
+    </div>
+    <div id="track"><div id="moving"></div><span>Moving block</span></div>
+    <div class="readouts">
+      <section><div class="label">UI update counter</div><div id="counter">00000000</div><div id="elapsed">0.0 s</div></section>
+      <section><div class="label">Trusted input events received</div><div id="eventCount">0</div><div id="lastEvent">Waiting for input</div></section>
+    </div>
+    <div id="marker"></div>
+  </main>
+  <footer>Only pointer/key events inside this test page are recorded (last 100). The UI update counter is not the video frame rate.</footer>
+</body>
+</html>

@@ -1,0 +1,166 @@
+// Only fixed filesystem probes and an authenticated health listener. No commands.
+var fs = null, http = null;
+try { fs = require('fs'); } catch (_) {}
+try { http = require('http'); } catch (_) {}
+module.exports.onStart = function () {};
+module.exports.onRequest = function () {};
+module.exports.onStop = function () {};
+module.exports.onExit = function () {};
+
+// TVCITATION standalone health v0.1. Correctly packaged separate from Moonlight.
+(function (serviceExports, existingFs, existingHttp, config) {
+  var fs = existingFs;
+  var http = existingHttp;
+  var runtime = typeof process === 'object' ? process : null;
+  var server = null;
+  var startedAt = null;
+  var stages = [];
+  function safeNumber(name) {
+    try {
+      var value = runtime && typeof runtime[name] === 'function' ? runtime[name]() : null;
+      return typeof value === 'number' && isFinite(value) && value >= 0 ? value : null;
+    } catch (_) { return null; }
+  }
+  function stage(name, error) {
+    try {
+      var record = {stage: name, atMs: Date.now()};
+      if (error && typeof error.code === 'string' && /^[A-Z][A-Z0-9_]{1,40}$/.test(error.code)) record.errorCode = error.code;
+      if (error && typeof error.name === 'string' && /^(Error|TypeError|ReferenceError|SyntaxError|RangeError|SecurityError|NotSupportedError)$/.test(error.name)) record.errorName = error.name;
+      stages.push(record);
+      if (stages.length > 16) stages.shift();
+      if (fs && typeof fs.writeFileSync === 'function') {
+        fs.writeFileSync('/home/owner/apps_rw/TVCitBoot1/data/tvcitation-boot-health-stage.json', JSON.stringify({
+          schemaVersion: 2, instanceId: config.instanceId,
+          pid: runtime && typeof runtime.pid === 'number' ? runtime.pid : null,
+          uptimeSeconds: safeNumber('uptime'), stages: stages
+        }), 'utf8');
+      }
+    } catch (_) {}
+    try { console.log('[TVCITATION-boot-v2] ' + name); } catch (_) {}
+  }
+  stage('inline-entered');
+  function readFixed(path, limit) {
+    if (!fs || typeof fs.readFileSync !== 'function') return null;
+    try {
+      var text = String(fs.readFileSync(path, 'utf8'));
+      return text.length <= limit ? text : null;
+    } catch (_) { return null; }
+  }
+  function health() {
+    var status = readFixed('/proc/self/status', 32768);
+    var boot = readFixed('/proc/sys/kernel/random/boot_id', 80);
+    boot = boot === null ? null : boot.trim();
+    if (boot !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(boot)) boot = null;
+    function ids(label) {
+      var match = status && status.match(new RegExp('^' + label + ':\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s*$', 'm'));
+      return match ? match.slice(1).map(function (value) { return Number(value); }) : null;
+    }
+    var cap = status && status.match(/^CapEff:\s*([0-9a-f]{1,16})\s*$/im);
+    return {
+      schemaVersion: 2, service: 'TVCitBoot1.Service', addon: 'TVCITATION-standalone-health-v1',
+      instanceId: config.instanceId, healthOnly: true, commandExecutionEnabled: false,
+      inputEnabled: false, bootResidentVerified: false,
+      process: {
+        pid: runtime && typeof runtime.pid === 'number' ? runtime.pid : null,
+        uid: safeNumber('getuid'), euid: safeNumber('geteuid'), gid: safeNumber('getgid'), egid: safeNumber('getegid'),
+        uptimeSeconds: safeNumber('uptime'), procUid: ids('Uid'), procGid: ids('Gid'), capEff: cap ? cap[1].toLowerCase() : null
+      },
+      bootId: boot,
+      addonUptimeSeconds: startedAt === null ? null : Math.max(0, (Date.now() - startedAt) / 1000),
+      capabilities: {
+        httpCreateServer: http ? typeof http.createServer : 'undefined',
+        fsReadFileSync: fs ? typeof fs.readFileSync : 'undefined',
+        fsWriteFileSync: fs ? typeof fs.writeFileSync : 'undefined',
+        childProcessProbe: 'deferred', cryptoProbe: 'deferred'
+      },
+      stages: stages
+    };
+  }
+  function equalSecret(value) {
+    var expected = 'Bearer ' + config.token;
+    if (typeof value !== 'string' || value.length !== expected.length || !/^[A-Za-z0-9 _-]+$/.test(value)) return false;
+    var difference = 0;
+    for (var i = 0; i < value.length; i++) difference |= value.charCodeAt(i) ^ expected.charCodeAt(i);
+    return difference === 0;
+  }
+  function reply(response, code, value) {
+    var body = JSON.stringify(value);
+    response.writeHead(code, {'Content-Type': 'application/json', 'Content-Length': body.length,
+      'Cache-Control': 'no-store', 'Connection': 'close', 'X-Content-Type-Options': 'nosniff'});
+    response.end(body);
+  }
+  function request(request, response) {
+    try {
+      var socket = request.socket || request.connection;
+      var peer = socket && socket.remoteAddress;
+      if (typeof peer === 'string' && peer.indexOf('::ffff:') === 0) peer = peer.slice(7);
+      var headers = request.headers || {};
+      if (peer !== '192.168.1.75' || headers.host !== '192.168.1.5:18767' ||
+          headers.origin !== undefined || !equalSecret(headers.authorization)) {
+        reply(response, 403, {ok: false}); return;
+      }
+      if (request.method !== 'GET' || request.url !== '/health') { reply(response, 404, {ok: false}); return; }
+      if (headers['transfer-encoding'] !== undefined ||
+          (headers['content-length'] !== undefined && headers['content-length'] !== '0')) {
+        reply(response, 400, {ok: false}); return;
+      }
+      reply(response, 200, health());
+    } catch (error) {
+      // Keep request data out of diagnostics, even when an HTTP implementation throws.
+      stage('request-error', error);
+      try { response.end(); } catch (_) {}
+    }
+  }
+  function start() {
+    if (server) return;
+    if (!http || typeof http.createServer !== 'function') { stage('http-unavailable'); return; }
+    try {
+      stage('before-create-server');
+      var ownServer = http.createServer(request);
+      server = ownServer;
+      stage('server-created');
+      if (typeof ownServer.on === 'function') ownServer.on('error', function (error) {
+        if (server === ownServer) server = null;
+        stage('listener-error', error);
+      });
+      ownServer.maxHeadersCount = 24;
+      if (typeof ownServer.setTimeout === 'function') ownServer.setTimeout(3000, function (socket) {
+        if (socket && typeof socket.destroy === 'function') socket.destroy();
+      });
+      stage('before-listen');
+      ownServer.listen(18767, '0.0.0.0', function () { startedAt = Date.now(); stage('listening'); });
+      stage('listen-returned');
+    } catch (error) {
+      server = null;
+      stage('start-error', error);
+    }
+  }
+  function stop() {
+    var ownServer = server;
+    server = null;
+    if (ownServer && typeof ownServer.close === 'function') {
+      try { ownServer.close(); } catch (_) {}
+    }
+  }
+  function wrap(name, finish) {
+    var original = serviceExports[name];
+    if (typeof original !== 'function') { stage(name + '-missing'); return; }
+    serviceExports[name] = function () {
+      stage(name + '-entered');
+      if (finish) {
+        try { return original.apply(this, arguments); }
+        finally { stop(); stage(name + '-finished'); }
+      }
+      // Preserve an original exception; do not treat a failed lifecycle as success.
+      var result = original.apply(this, arguments);
+      stage(name + '-original-returned');
+      start();
+      return result;
+    };
+  }
+  wrap('onStart', false);
+  wrap('onRequest', false);
+  wrap('onStop', true);
+  wrap('onExit', true);
+  stage('lifecycle-wrapped');
+})(module.exports, typeof fs === 'undefined' ? null : fs, typeof http === 'undefined' ? null : http, __TVCITATION_CONFIG__);

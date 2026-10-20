@@ -1,0 +1,3 @@
+[submodule "research/samsung-tv-root"]
+	path = research/samsung-tv-root
+	url = https://github.com/chris-ritsen/samsung-tv-root.git

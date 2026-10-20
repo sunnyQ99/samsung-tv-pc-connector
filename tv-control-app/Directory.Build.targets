@@ -1,0 +1,8 @@
+<Project>
+  <!-- WebView2 imports both UI adapters; this application uses WinForms only. -->
+  <Target Name="RemoveUnusedWebViewWpfAdapter" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+</Project>

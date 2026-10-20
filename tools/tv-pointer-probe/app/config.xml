@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://tvcitation.local/pointer-probe" version="0.1.0" viewmodes="fullscreen">
+  <tizen:application id="TVCPtrT001.Probe" package="TVCPtrT001" required_version="5.5"/>
+  <content src="index.html"/>
+  <name>TVCITATION Pointer Test</name>
+  <description>Offline pointer input and unprotected visual test pattern</description>
+  <feature name="http://tizen.org/feature/screen.size.all"/>
+  <tizen:profile name="tv-samsung"/>
+  <tizen:metadata key="http://samsung.com/tv/metadata/floating.navigation" value="false"/>
+  <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable" pointing-device-support="enable"/>
+</widget>

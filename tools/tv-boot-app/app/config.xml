@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://tvcitation.local/boot-bridge" version="0.1.0" viewmodes="fullscreen">
+  <tizen:application id="TVCitBoot1.Bridge" package="TVCitBoot1" required_version="5.5"/>
+  <content src="index.html"/>
+  <name>TVCITATION Bridge</name>
+  <description>Authenticated local background health bridge</description>
+  <feature name="http://tizen.org/feature/screen.size.all"/>
+  <tizen:profile name="tv-samsung"/>
+  <tizen:privilege name="http://tizen.org/privilege/internet"/>
+  <tizen:privilege name="http://tizen.org/privilege/filesystem.read"/>
+  <tizen:privilege name="http://tizen.org/privilege/filesystem.write"/>
+  <tizen:privilege name="http://tizen.org/privilege/application.launch"/>
+  <tizen:service id="TVCitBoot1.Service" on-boot="true" auto-restart="true">
+    <tizen:content src="service/service.js"/>
+    <tizen:name>TVCITATION Background Bridge</tizen:name>
+    <tizen:description>Authenticated health listener for the owner's computer</tizen:description>
+    <tizen:category name="http://tizen.org/category/service"/>
+  </tizen:service>
+  <tizen:setting screen-orientation="landscape" background-support="enable" encryption="disable" install-location="auto"/>
+</widget>
