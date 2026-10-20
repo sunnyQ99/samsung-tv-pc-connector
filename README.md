@@ -2,6 +2,8 @@
 
 Watch and control a Samsung smart TV from a Windows PC. The TV's live picture runs inside a desktop window: move the mouse and click to use TV apps, press remote keys, type into TV text fields. The same app also casts the PC desktop to the TV, with optional TV-only audio.
 
+⭐ **If this project helps you, please star the repo.** It is the best way to say thanks and helps others find it.
+
 > **Status: personal research project, one verified TV.** Built and tested against a single Samsung QN90C (2023, Tizen 7, ARMv7). It needs **root access to the TV** through [samsung-tv-root](https://github.com/chris-ritsen/samsung-tv-root). The TV-side helpers refuse to run unless the Samsung system libraries match the SHA-256 hashes of that firmware. Not affiliated with or endorsed by Samsung. Rooting your TV is at your own risk.
 
 ## Features
@@ -139,4 +141,4 @@ The UI check uses its own loopback mock server, an off-screen window and a tempo
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). You are free to use, modify and share this project, including commercially, as long as you keep the copyright notice. If you build on it, a link back and a ⭐ are appreciated.
